@@ -86,14 +86,14 @@ function getStats() {
 }
 
 /* ══════════════════════════════════════════════════════
-   RENDER COMPLETO — solo al cambiar de tab o acción real
+   RENDER COMPLETO
    ══════════════════════════════════════════════════════ */
 function render() {
   document.getElementById("app").innerHTML = `
     ${renderHeader()}
     <div class="container">
-      ${renderQuorumBanner()}
-      ${renderStats()}
+      <div id="quorumBannerWrap">${renderQuorumBannerInner()}</div>
+      <div id="statsArea">${renderStatsInner()}</div>
       <div class="tabs">
         ${["registro","lista","resumen"].map(t => `
           <div class="tab ${state.activeTab===t?"active":""}" onclick="setTab('${t}')">
@@ -106,10 +106,9 @@ function render() {
     </div>`;
 }
 
-/* ── Actualización parcial del banner y stats sin tocar inputs ── */
 function refreshStats() {
-  setHTML("quorumBanner", renderQuorumBannerInner());
-  setHTML("statsArea",    renderStatsInner());
+  setHTML("quorumBannerWrap", renderQuorumBannerInner());
+  setHTML("statsArea",        renderStatsInner());
 }
 
 /* ══════════════════════════════════════════════════════
@@ -140,7 +139,7 @@ function renderHeader() {
 function renderQuorumBannerInner() {
   const s = getStats();
   return `
-  <div class="quorum-banner ${s.quorum?"si":"no"}" id="quorumBanner">
+  <div class="quorum-banner ${s.quorum?"si":"no"}">
     <div>
       <div class="qtext">
         ${s.quorum ? "✅ QUÓRUM ALCANZADO" : "⏳ SIN QUÓRUM AÚN"}
@@ -156,9 +155,6 @@ function renderQuorumBannerInner() {
       <div style="font-size:0.8rem;opacity:0.75">del coeficiente</div>
     </div>
   </div>`;
-}
-function renderQuorumBanner() {
-  return `<div id="quorumBanner">${renderQuorumBannerInner()}</div>`;
 }
 
 /* ══════════════════════════════════════════════════════
@@ -206,23 +202,23 @@ function renderStatsInner() {
     </div>
   </div>`;
 }
-function renderStats() {
-  return `<div id="statsArea">${renderStatsInner()}</div>`;
-}
 
 /* ══════════════════════════════════════════════════════
    TAB: REGISTRO
+   El campo de representante tiene su propio div estable
+   (#repWrap) que NUNCA se re-renderiza al escribir.
    ══════════════════════════════════════════════════════ */
 function renderRegistro() {
   return `
   <div class="main-grid">
-    <!-- Izquierda: búsqueda -->
+
+    <!-- Izquierda -->
     <div>
       <div class="card">
         <div class="card-header"><h2>📋 Registrar Asistencia</h2></div>
         <div class="card-body">
 
-          <!-- Input de búsqueda — SIN oninput que llame render() -->
+          <!-- Buscador: sin oninput en HTML -->
           <div class="search-box">
             <span class="ico">🔍</span>
             <input
@@ -234,16 +230,23 @@ function renderRegistro() {
             />
           </div>
 
-          <!-- Zona de sugerencias: actualización parcial -->
+          <!-- Sugerencias -->
           <div id="suggestionsWrap">${renderSuggestions()}</div>
 
-          <!-- Zona de confirmación: actualización parcial -->
-          <div id="confirmWrap">${renderConfirmArea()}</div>
+          <!-- Tarjeta de confirmación (sin el campo de rep) -->
+          <div id="confirmWrap">${renderConfirmCard()}</div>
+
+          <!-- Campo representante INDEPENDIENTE — nunca se destruye -->
+          <div id="repWrap">${renderRepField()}</div>
+
+          <!-- Botones de acción -->
+          <div id="actionWrap">${renderActionButtons()}</div>
 
           <hr class="divider"/>
 
-          <!-- Últimos registros: actualización parcial -->
+          <!-- Últimos registros -->
           <div id="recentWrap">${renderRecent()}</div>
+
         </div>
       </div>
     </div>
@@ -260,10 +263,67 @@ function renderRegistro() {
         </div>
       </div>
     </div>
+
   </div>`;
 }
 
-/* ── Sugerencias (parcial) ── */
+/* ── Tarjeta de confirmación (SIN el campo de texto de rep) ── */
+function renderConfirmCard() {
+  const apt = state.selectedApt;
+  if (!apt) return `
+    <div style="text-align:center;padding:24px 0;color:var(--gray-400)">
+      <div style="font-size:2.5rem;margin-bottom:8px">🔍</div>
+      <div class="text-sm">Busque un apartamento para registrar su asistencia</div>
+    </div>`;
+  return `
+  <div class="confirm-card" style="margin-bottom:12px">
+    <div class="apt">🏠 ${apt.code}</div>
+    <div class="name">${esc(apt.owner)}</div>
+    <div class="coeff">Coeficiente: ${apt.coefficient}%</div>
+  </div>`;
+}
+
+/* ── Campo representante: contenedor ESTABLE ──
+   Se muestra/oculta pero NUNCA se re-crea mientras se escribe ── */
+function renderRepField() {
+  const visible = !!state.selectedApt;
+  return `
+  <div style="display:${visible?"block":"none"};margin-bottom:12px">
+    <label style="display:block;font-weight:600;font-size:0.875rem;
+                  margin-bottom:6px;color:var(--gray-700)">
+      ¿Quién asiste? — Propietario o representante
+    </label>
+    <input
+      type="text"
+      id="repInput"
+      placeholder="Escriba el nombre completo de quien se presenta..."
+      style="width:100%;padding:10px 14px;border:2px solid var(--gray-200);
+             border-radius:8px;font-size:0.95rem;box-sizing:border-box;
+             transition:border 0.15s"
+      onfocus="this.style.borderColor='var(--primary)';
+               this.style.boxShadow='0 0 0 3px rgba(26,86,219,0.1)'"
+      onblur="this.style.borderColor='var(--gray-200)';
+              this.style.boxShadow='none'"
+    />
+    <div style="font-size:0.78rem;color:var(--gray-500);margin-top:4px">
+      Puede ser el propietario, un familiar o un representante autorizado.
+    </div>
+  </div>`;
+}
+
+/* ── Botones de acción ── */
+function renderActionButtons() {
+  if (!state.selectedApt) return "";
+  return `
+  <div class="flex gap-2">
+    <button class="btn btn-success btn-lg" style="flex:1" onclick="registerAttendance()">
+      ✅ Confirmar Asistencia
+    </button>
+    <button class="btn btn-gray btn-lg" onclick="clearSelection()" title="Cancelar">✕</button>
+  </div>`;
+}
+
+/* ── Sugerencias ── */
 function renderSuggestions() {
   if (state.suggestions.length === 0) return "";
   return `
@@ -286,49 +346,12 @@ function renderSuggestions() {
   </div>`;
 }
 
-/* ── Área de confirmación (parcial) ── */
-function renderConfirmArea() {
-  const apt = state.selectedApt;
-  if (!apt) return `
-    <div style="text-align:center;padding:24px 0;color:var(--gray-400)">
-      <div style="font-size:2.5rem;margin-bottom:8px">🔍</div>
-      <div class="text-sm">Busque un apartamento para registrar su asistencia</div>
-    </div>`;
-  return `
-  <div class="confirm-card">
-    <div class="apt">🏠 ${apt.code}</div>
-    <div class="name">${esc(apt.owner)}</div>
-    <div class="coeff">Coeficiente: ${apt.coefficient}%</div>
-  </div>
-  <div style="margin-bottom:12px">
-    <label style="display:block;font-weight:600;font-size:0.875rem;
-                  margin-bottom:6px;color:var(--gray-700)">
-      Representante / Delegado
-      <span style="font-weight:400;color:var(--gray-500)">(opcional)</span>
-    </label>
-    <input type="text" id="repInput"
-      style="width:100%;padding:9px 12px;border:2px solid var(--gray-200);
-             border-radius:8px;font-size:0.95rem;box-sizing:border-box"
-      placeholder="Nombre de quien asiste..."
-      value="${esc(state.representative)}"
-      onkeydown="if(event.key==='Enter')registerAttendance()"
-    />
-  </div>
-  <div class="flex gap-2">
-    <button class="btn btn-success btn-lg" style="flex:1" onclick="registerAttendance()">
-      ✅ Confirmar Asistencia
-    </button>
-    <button class="btn btn-gray" onclick="clearSelection()">✕</button>
-  </div>`;
-}
-
-/* ── Últimos registros (parcial) ── */
+/* ── Recientes ── */
 function renderRecent() {
   const recent = APARTMENTS
     .filter(a => attendance[a.code])
     .sort((a,b) => new Date(attendance[b.code].registeredAt) - new Date(attendance[a.code].registeredAt))
     .slice(0, 6);
-
   return `
   <div class="font-bold text-sm" style="margin-bottom:10px">🕐 Últimos registros</div>
   ${recent.length === 0
@@ -353,27 +376,23 @@ function renderRecent() {
       </div>`).join("")}`;
 }
 
-/* ── Tabla de presentes (parcial) ── */
+/* ── Tabla de presentes ── */
 function renderPresentTable() {
   const rows = APARTMENTS
     .filter(a => attendance[a.code])
     .sort((a,b) => new Date(attendance[b.code].registeredAt) - new Date(attendance[a.code].registeredAt));
-
   if (rows.length === 0) return `
-    <div class="table-wrap">
-      <table><tbody>
-        <tr><td colspan="6" class="text-center text-gray" style="padding:30px">
-          Ningún apartamento registrado aún.
-        </td></tr>
-      </tbody></table>
-    </div>`;
-
+    <div class="table-wrap"><table><tbody>
+      <tr><td colspan="6" class="text-center text-gray" style="padding:30px">
+        Ningún apartamento registrado aún.
+      </td></tr>
+    </tbody></table></div>`;
   return `
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>Apartamento</th><th>Propietario</th><th>Representante</th>
+          <th>Apartamento</th><th>Propietario / Representante</th>
           <th>Coef.</th><th>Hora</th><th></th>
         </tr>
       </thead>
@@ -381,11 +400,13 @@ function renderPresentTable() {
         ${rows.map(a => `
           <tr>
             <td><span class="font-mono font-bold">${a.code}</span></td>
-            <td class="text-sm">${esc(a.owner)}</td>
-            <td class="text-sm text-gray">
+            <td class="text-sm">
+              <div>${esc(a.owner)}</div>
               ${attendance[a.code].representative
-                ? esc(attendance[a.code].representative)
-                : `<span style="color:var(--gray-300)">—</span>`}
+                ? `<div style="color:var(--primary);font-size:0.78rem;margin-top:2px">
+                     👤 ${esc(attendance[a.code].representative)}
+                   </div>`
+                : ""}
             </td>
             <td><span class="tag">${a.coefficient}</span></td>
             <td class="text-xs text-gray">${formatTime(attendance[a.code].registeredAt)}</td>
@@ -417,16 +438,12 @@ function renderLista() {
             ${{todos:"Todos",presentes:"✅ Presentes",ausentes:"⏳ Ausentes"}[f]}
           </button>`).join("")}
       </div>
-
-      <!-- Input de búsqueda SIN render() en oninput -->
       <div class="search-box" style="margin-bottom:12px">
         <span class="ico">🔍</span>
         <input type="text" id="listSearchInput"
           placeholder="Buscar en la lista..."
           value="${esc(state.listSearch)}"/>
       </div>
-
-      <!-- Tabla en contenedor propio para actualización parcial -->
       <div id="listaTableWrap">${renderListaTable()}</div>
     </div>
   </div>`;
@@ -440,14 +457,13 @@ function renderListaTable() {
     if (f) return a.code.toLowerCase().includes(f) || a.owner.toLowerCase().includes(f);
     return true;
   });
-
   return `
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
           <th>#</th><th>Apartamento</th><th>Propietario</th><th>Coeficiente</th>
-          <th>Estado</th><th>Hora Registro</th><th>Representante</th><th>Acción</th>
+          <th>Estado</th><th>Hora</th><th>Asistente</th><th>Acción</th>
         </tr>
       </thead>
       <tbody>
@@ -487,55 +503,48 @@ function renderResumen() {
   const s = getStats();
   const bloques = {};
   APARTMENTS.forEach(a => {
-    const bloque = a.code.split("-")[0];
-    if (!bloques[bloque]) bloques[bloque] = {total:0,present:0,coeff:0,coeffTotal:0};
-    bloques[bloque].total++;
-    bloques[bloque].coeffTotal += a.coefficient;
-    if (attendance[a.code]) {
-      bloques[bloque].present++;
-      bloques[bloque].coeff += a.coefficient;
-    }
+    const b = a.code.split("-")[0];
+    if (!bloques[b]) bloques[b] = {total:0,present:0,coeff:0,coeffTotal:0};
+    bloques[b].total++;
+    bloques[b].coeffTotal += a.coefficient;
+    if (attendance[a.code]) { bloques[b].present++; bloques[b].coeff += a.coefficient; }
   });
-
   return `
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
     <div class="card">
       <div class="card-header"><h2>📊 Resumen General</h2></div>
       <div class="card-body">
-        <table>
-          <tbody>
-            <tr><td class="font-bold">Total apartamentos</td>
-                <td style="text-align:right;font-weight:700">${s.total}</td></tr>
-            <tr><td style="color:var(--success)">✅ Presentes</td>
-                <td style="text-align:right;font-weight:700">${s.present}</td></tr>
-            <tr><td style="color:var(--warning)">⏳ Ausentes</td>
-                <td style="text-align:right;font-weight:700">${s.absent}</td></tr>
-            <tr><td>% por apartamentos</td>
-                <td style="text-align:right;font-weight:700">${s.pctApt}%</td></tr>
-            <tr style="border-top:2px solid var(--gray-200)">
-              <td class="font-bold">Coeficiente total</td>
-              <td style="text-align:right;font-weight:700">${TOTAL_COEFF.toFixed(2)}</td></tr>
-            <tr><td style="color:var(--success)">Coeficiente presente</td>
-                <td style="text-align:right;font-weight:700">${s.presentCoeff.toFixed(2)}</td></tr>
-            <tr><td class="font-bold">% Coeficiente</td>
-                <td style="text-align:right;font-weight:800;font-size:1.1rem;
-                           color:${s.quorum?"var(--success)":"var(--danger)"}">
-                  ${s.pctCoeff}%</td></tr>
-            <tr style="border-top:2px solid var(--gray-200)">
-              <td class="font-bold">¿Quórum?</td>
-              <td style="text-align:right">
-                ${s.quorum
-                  ? `<span class="badge badge-success">✅ SÍ</span>`
-                  : `<span class="badge badge-danger">❌ NO</span>`}
-              </td>
-            </tr>
-            <tr><td>Falta para quórum</td>
-                <td style="text-align:right;font-weight:700">
-                  ${s.quorum ? "—"
-                    : (QUORUM_MIN_PCT - parseFloat(s.pctCoeff)).toFixed(2) + "%"}
-                </td></tr>
-          </tbody>
-        </table>
+        <table><tbody>
+          <tr><td class="font-bold">Total apartamentos</td>
+              <td style="text-align:right;font-weight:700">${s.total}</td></tr>
+          <tr><td style="color:var(--success)">✅ Presentes</td>
+              <td style="text-align:right;font-weight:700">${s.present}</td></tr>
+          <tr><td style="color:var(--warning)">⏳ Ausentes</td>
+              <td style="text-align:right;font-weight:700">${s.absent}</td></tr>
+          <tr><td>% por apartamentos</td>
+              <td style="text-align:right;font-weight:700">${s.pctApt}%</td></tr>
+          <tr style="border-top:2px solid var(--gray-200)">
+            <td class="font-bold">Coeficiente total</td>
+            <td style="text-align:right;font-weight:700">${TOTAL_COEFF.toFixed(2)}</td></tr>
+          <tr><td style="color:var(--success)">Coef. presente</td>
+              <td style="text-align:right;font-weight:700">${s.presentCoeff.toFixed(2)}</td></tr>
+          <tr><td class="font-bold">% Coeficiente</td>
+              <td style="text-align:right;font-weight:800;font-size:1.1rem;
+                         color:${s.quorum?"var(--success)":"var(--danger)"}">
+                ${s.pctCoeff}%</td></tr>
+          <tr style="border-top:2px solid var(--gray-200)">
+            <td class="font-bold">¿Quórum?</td>
+            <td style="text-align:right">
+              ${s.quorum
+                ? `<span class="badge badge-success">✅ SÍ</span>`
+                : `<span class="badge badge-danger">❌ NO</span>`}
+            </td></tr>
+          <tr><td>Falta para quórum</td>
+              <td style="text-align:right;font-weight:700">
+                ${s.quorum ? "—"
+                  : (QUORUM_MIN_PCT - parseFloat(s.pctCoeff)).toFixed(2) + "%"}
+              </td></tr>
+        </tbody></table>
       </div>
     </div>
 
@@ -550,15 +559,15 @@ function renderResumen() {
             <tbody>
               ${Object.entries(bloques)
                 .sort((a,b) => parseInt(a[0]) - parseInt(b[0]))
-                .map(([bloque,d]) => `
+                .map(([b,d]) => `
                 <tr>
-                  <td><span class="font-mono font-bold">Bloque ${bloque}</span></td>
+                  <td><span class="font-mono font-bold">Bloque ${b}</span></td>
                   <td>${d.total}</td>
-                  <td style="color:${d.present===d.total?"var(--success)":"var(--gray-800)"}">
+                  <td style="color:${d.present===d.total?"var(--success)":"inherit"}">
                     ${d.present}/${d.total}
                   </td>
                   <td><span class="tag">
-                    ${d.total ? ((d.present/d.total)*100).toFixed(0) : 0}%
+                    ${d.total?((d.present/d.total)*100).toFixed(0):0}%
                   </span></td>
                   <td>${d.coeff.toFixed(2)}</td>
                 </tr>`).join("")}
@@ -571,7 +580,7 @@ function renderResumen() {
 
   <div class="card">
     <div class="card-header">
-      <h2>🕐 Historial de Registros (orden de llegada)</h2>
+      <h2>🕐 Historial (orden de llegada)</h2>
       <button class="btn btn-success btn-sm" onclick="exportCSV()">📥 Exportar CSV</button>
     </div>
     <div class="card-body" style="padding:0">
@@ -579,7 +588,7 @@ function renderResumen() {
         <table>
           <thead>
             <tr><th>#</th><th>Apartamento</th><th>Propietario</th>
-                <th>Representante</th><th>Coeficiente</th><th>Fecha y Hora</th></tr>
+                <th>Asistente / Representante</th><th>Coeficiente</th><th>Fecha y Hora</th></tr>
           </thead>
           <tbody>
             ${(() => {
@@ -590,14 +599,13 @@ function renderResumen() {
                   new Date(attendance[b.code].registeredAt));
               if (!rows.length) return `
                 <tr><td colspan="6" class="text-center text-gray" style="padding:24px">
-                  Sin registros aún.
-                </td></tr>`;
+                  Sin registros aún.</td></tr>`;
               return rows.map((a,i) => `
                 <tr>
                   <td class="text-gray text-xs">${i+1}</td>
                   <td><span class="font-mono font-bold">${a.code}</span></td>
                   <td class="text-sm">${esc(a.owner)}</td>
-                  <td class="text-sm text-gray">
+                  <td class="text-sm" style="color:var(--primary)">
                     ${attendance[a.code].representative
                       ? esc(attendance[a.code].representative) : "—"}
                   </td>
@@ -613,52 +621,33 @@ function renderResumen() {
 }
 
 /* ══════════════════════════════════════════════════════
-   ACCIONES DE BÚSQUEDA — actualización PARCIAL
-   ══════════════════════════════════════════════════════ */
-
-/* Búsqueda principal (tab registro) — NO llama render() */
-function onSearchMain(value) {
-  state.searchQuery = value;
-  const q = value.toLowerCase().trim();
-  if (q.length < 1) {
-    state.suggestions = [];
-  } else {
-    state.suggestions = APARTMENTS.filter(a =>
-      a.code.toLowerCase().includes(q) ||
-      a.owner.toLowerCase().includes(q)
-    ).slice(0, 8);
-  }
-  // Solo actualiza la caja de sugerencias
-  setHTML("suggestionsWrap", renderSuggestions());
-}
-
-/* Búsqueda en lista completa — NO llama render() */
-function onListSearchInput(value) {
-  state.listSearch = value;
-  setHTML("listaTableWrap", renderListaTable());
-}
-
-/* ══════════════════════════════════════════════════════
-   ACCIONES DE REGISTRO
+   ACCIONES
    ══════════════════════════════════════════════════════ */
 function selectApt(code) {
   const apt = APARTMENTS.find(a => a.code === code);
   if (!apt) return;
   if (attendance[code]) { toast("Este apartamento ya está registrado.", "warning"); return; }
+
   state.selectedApt    = apt;
   state.suggestions    = [];
   state.searchQuery    = `${apt.code} — ${apt.owner}`;
   state.representative = "";
 
-  // Actualizar input de búsqueda
+  // Actualizar el valor del input de búsqueda sin re-renderizarlo
   const si = document.getElementById("searchInput");
   if (si) si.value = state.searchQuery;
 
-  // Actualizar parcialmente sugerencias y área de confirmación
+  // Actualizar zonas parciales
   setHTML("suggestionsWrap", renderSuggestions());
-  setHTML("confirmWrap", renderConfirmArea());
+  setHTML("confirmWrap",     renderConfirmCard());
+  setHTML("repWrap",         renderRepField());
+  setHTML("actionWrap",      renderActionButtons());
 
-  setTimeout(() => document.getElementById("repInput")?.focus(), 30);
+  // Enfocar el campo de representante
+  setTimeout(() => {
+    const rep = document.getElementById("repInput");
+    if (rep) rep.focus();
+  }, 30);
 }
 
 function clearSelection() {
@@ -671,7 +660,9 @@ function clearSelection() {
   if (si) { si.value = ""; si.focus(); }
 
   setHTML("suggestionsWrap", renderSuggestions());
-  setHTML("confirmWrap",     renderConfirmArea());
+  setHTML("confirmWrap",     renderConfirmCard());
+  setHTML("repWrap",         renderRepField());
+  setHTML("actionWrap",      renderActionButtons());
 }
 
 function registerAttendance() {
@@ -679,39 +670,45 @@ function registerAttendance() {
   if (!apt) return;
   if (attendance[apt.code]) { toast("Ya está registrado.", "warning"); return; }
 
-  // Leer representante del input en vivo
+  // Leer el valor actual del input de representante directamente del DOM
   const repEl = document.getElementById("repInput");
-  const rep   = repEl ? repEl.value.trim() : state.representative;
+  const rep   = repEl ? repEl.value.trim() : "";
 
   attendance[apt.code] = {
     registeredAt:   new Date().toISOString(),
     representative: rep,
   };
   saveAttendance(attendance);
-  toast(`${apt.code} — ${apt.owner.split(" ").slice(0,2).join(" ")} registrado`, "success");
 
-  // Resetear estado
+  const nombre = apt.owner.split(" ").slice(0,2).join(" ");
+  toast(`${apt.code} — ${nombre} registrado`, "success");
+
+  // Limpiar estado
   state.selectedApt    = null;
   state.searchQuery    = "";
   state.suggestions    = [];
   state.representative = "";
 
-  // Limpiar input
+  // Limpiar input de búsqueda
   const si = document.getElementById("searchInput");
   if (si) { si.value = ""; }
 
   // Actualizar todas las zonas parciales
   setHTML("suggestionsWrap",  renderSuggestions());
-  setHTML("confirmWrap",      renderConfirmArea());
+  setHTML("confirmWrap",      renderConfirmCard());
+  setHTML("repWrap",          renderRepField());
+  setHTML("actionWrap",       renderActionButtons());
   setHTML("recentWrap",       renderRecent());
   setHTML("presentTableWrap", renderPresentTable());
+  setHTML("presentCount",     Object.keys(attendance).length);
+  setHTML("presentCoeffTag",  `${getStats().pctCoeff}% coeficiente`);
   refreshStats();
 
-  // Actualizar contador del header de la tabla
-  setHTML("presentCount", Object.keys(attendance).length);
-  setHTML("presentCoeffTag", `${getStats().pctCoeff}% coeficiente`);
-
-  setTimeout(() => document.getElementById("searchInput")?.focus(), 30);
+  // Devolver foco al buscador
+  setTimeout(() => {
+    const s = document.getElementById("searchInput");
+    if (s) s.focus();
+  }, 30);
 }
 
 function quickRegister(code) {
@@ -720,7 +717,6 @@ function quickRegister(code) {
   attendance[code] = { registeredAt: new Date().toISOString(), representative: "" };
   saveAttendance(attendance);
   toast(`${apt.code} registrado`, "success");
-  // Re-render completo porque estamos en lista
   render();
   setTimeout(() => {
     const el = document.getElementById("listSearchInput");
@@ -737,7 +733,6 @@ function removeAttendance(code) {
   toast(`${apt.code} removido`, "warning");
 
   if (state.activeTab === "registro") {
-    // Actualización parcial
     setHTML("recentWrap",       renderRecent());
     setHTML("presentTableWrap", renderPresentTable());
     setHTML("presentCount",     Object.keys(attendance).length);
@@ -764,9 +759,8 @@ function setTab(tab) {
 
 function setListFilter(f) {
   state.listFilter = f;
-  // Solo actualizar la tabla, no el input de búsqueda
   document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
-  event.target.classList.add("active");
+  event?.target?.classList.add("active");
   setHTML("listaTableWrap", renderListaTable());
 }
 
@@ -781,13 +775,14 @@ function exportCSV() {
   csv     += `Coeficiente presente:,${s.presentCoeff.toFixed(2)},de,${TOTAL_COEFF.toFixed(2)}\n`;
   csv     += `% Coeficiente:,${s.pctCoeff}%\n`;
   csv     += `Quórum:,${s.quorum?"SÍ":"NO"}\n\n`;
-  csv     += `#,Apartamento,Propietario,Representante,Coeficiente,Estado,Hora Registro\n`;
+  csv     += `#,Apartamento,Propietario,Asistente/Representante,Coeficiente,Estado,Hora Registro\n`;
   APARTMENTS
     .sort((a,b) => a.code.localeCompare(b.code))
     .forEach((a,i) => {
       const rec = attendance[a.code];
-      csv += `${i+1},"${a.code}","${a.owner}","${rec?.representative||""}",` +
-             `"${a.coefficient}","${rec?"Presente":"Ausente"}","${rec?formatDateTime(rec.registeredAt):""}"\n`;
+      csv += `${i+1},"${a.code}","${a.owner}","${rec?.representative||""}",`+
+             `"${a.coefficient}","${rec?"Presente":"Ausente"}",`+
+             `"${rec ? formatDateTime(rec.registeredAt) : ""}"\n`;
     });
   const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
   const url  = URL.createObjectURL(blob);
@@ -796,30 +791,20 @@ function exportCSV() {
   link.download = `quorum_posada_${new Date().toISOString().slice(0,10)}.csv`;
   link.click();
   URL.revokeObjectURL(url);
-  toast("CSV exportado correctamente", "success");
+  toast("CSV exportado", "success");
 }
 
 /* ══════════════════════════════════════════════════════
-   EVENTOS GLOBALES — delegación desde el documento
+   EVENTOS GLOBALES (delegación — nunca interfiere con inputs)
    ══════════════════════════════════════════════════════ */
 document.addEventListener("input", e => {
-  // Búsqueda principal (registro)
-  if (e.target.id === "searchInput") {
-    onSearchMain(e.target.value);
-  }
-  // Búsqueda en lista completa
-  if (e.target.id === "listSearchInput") {
-    onListSearchInput(e.target.value);
-  }
-  // Representante
-  if (e.target.id === "repInput") {
-    state.representative = e.target.value;
-  }
+  if (e.target.id === "searchInput")    onSearchMain(e.target.value);
+  if (e.target.id === "listSearchInput") onListSearchInput(e.target.value);
+  // repInput: NO hacemos nada — el valor se lee en registerAttendance()
 });
 
 document.addEventListener("keydown", e => {
   if (e.target.id === "searchInput" && e.key === "Enter") {
-    // Si hay una sola sugerencia no registrada, seleccionarla
     const disponibles = state.suggestions.filter(a => !attendance[a.code]);
     if (disponibles.length === 1) selectApt(disponibles[0].code);
   }
@@ -830,14 +815,27 @@ document.addEventListener("keydown", e => {
 
 // Cerrar sugerencias al clicar fuera
 document.addEventListener("click", e => {
-  if (!e.target.closest("#suggestionsWrap") &&
-      e.target.id !== "searchInput") {
+  if (!e.target.closest("#suggestionsWrap") && e.target.id !== "searchInput") {
     if (state.suggestions.length > 0) {
       state.suggestions = [];
       setHTML("suggestionsWrap", "");
     }
   }
 });
+
+function onSearchMain(value) {
+  state.searchQuery = value;
+  const q = value.toLowerCase().trim();
+  state.suggestions = q.length < 1 ? [] : APARTMENTS.filter(a =>
+    a.code.toLowerCase().includes(q) || a.owner.toLowerCase().includes(q)
+  ).slice(0, 8);
+  setHTML("suggestionsWrap", renderSuggestions());
+}
+
+function onListSearchInput(value) {
+  state.listSearch = value;
+  setHTML("listaTableWrap", renderListaTable());
+}
 
 /* ══════════════════════════════════════════════════════
    RELOJ EN VIVO
