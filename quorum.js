@@ -279,9 +279,25 @@ function renderConfirmCard() {
   <div class="confirm-card" style="margin-bottom:12px">
     <div class="apt">🏠 ${apt.code}</div>
     <div class="name">${esc(apt.owner)}</div>
-    <div class="coeff">Coeficiente: ${apt.coefficient}%</div>
+    <div class="coeff" style="margin-top:6px">Coeficiente: ${apt.coefficient}%</div>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid rgba(26,86,219,0.2)">
+      <div style="font-size:0.75rem;color:var(--primary-dark);
+                  text-transform:uppercase;letter-spacing:0.08em;
+                  font-weight:700;margin-bottom:4px">
+        🔑 PIN Votación
+      </div>
+      <div style="font-family:'Courier New',monospace;font-size:2rem;
+                  font-weight:800;color:var(--primary-dark);
+                  letter-spacing:0.25em">
+        ${apt.pin}
+      </div>
+      <div style="font-size:0.75rem;color:var(--gray-500);margin-top:2px">
+        Entregue este código al propietario para votar
+      </div>
+    </div>
   </div>`;
 }
+
 
 /* ── Campo representante: contenedor ESTABLE ──
    Se muestra/oculta pero NUNCA se re-crea mientras se escribe ── */
@@ -312,19 +328,37 @@ function renderRepField() {
 }
 
 /* ── Botones de acción ── */
-function renderActionButtons() {
-  if (!state.selectedApt) return "";
+function renderSuggestions() {
+  if (state.suggestions.length === 0) return "";
   return `
-  <div class="flex gap-2">
-    <button class="btn btn-success btn-lg" style="flex:1" onclick="registerAttendance()">
-      ✅ Confirmar Asistencia
-    </button>
-    <button class="btn btn-gray btn-lg" onclick="clearSelection()" title="Cancelar">✕</button>
+  <div class="suggestions" id="suggestionsBox">
+    ${state.suggestions.map(a => {
+      const ya = !!attendance[a.code];
+      return `
+      <div class="suggestion-item ${ya?"ya-registrado":""}"
+        onclick="${ya
+          ? "toast('Este apartamento ya está registrado.','warning')"
+          : `selectApt('${a.code}')`}">
+        <div class="apt-code" style="display:flex;align-items:center;justify-content:space-between">
+          <span>${a.code} ${ya
+            ? `<span class="badge badge-success" style="margin-left:6px">✅ Presente</span>`
+            : ""}</span>
+          <span style="font-family:'Courier New',monospace;font-size:1rem;
+                       font-weight:800;color:var(--primary);
+                       background:var(--primary-light);
+                       padding:2px 10px;border-radius:6px;letter-spacing:0.12em">
+            ${a.pin}
+          </span>
+        </div>
+        <div class="apt-name">${esc(a.owner)}</div>
+        <div class="apt-coeff">Coeficiente: ${a.coefficient}%</div>
+      </div>`;
+    }).join("")}
   </div>`;
 }
 
 /* ── Sugerencias ── */
-function renderSuggestions() {
+
   if (state.suggestions.length === 0) return "";
   return `
   <div class="suggestions" id="suggestionsBox">
@@ -381,19 +415,25 @@ function renderPresentTable() {
   const rows = APARTMENTS
     .filter(a => attendance[a.code])
     .sort((a,b) => new Date(attendance[b.code].registeredAt) - new Date(attendance[a.code].registeredAt));
+
   if (rows.length === 0) return `
     <div class="table-wrap"><table><tbody>
       <tr><td colspan="6" class="text-center text-gray" style="padding:30px">
         Ningún apartamento registrado aún.
       </td></tr>
     </tbody></table></div>`;
+
   return `
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>Apartamento</th><th>Propietario / Representante</th>
-          <th>Coef.</th><th>Hora</th><th></th>
+          <th>Apartamento</th>
+          <th>Propietario / Representante</th>
+          <th>PIN</th>
+          <th>Coef.</th>
+          <th>Hora</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -408,6 +448,15 @@ function renderPresentTable() {
                    </div>`
                 : ""}
             </td>
+            <td>
+              <span style="font-family:'Courier New',monospace;font-weight:800;
+                           font-size:1rem;color:var(--primary-dark);
+                           background:var(--primary-light);
+                           padding:2px 8px;border-radius:6px;
+                           letter-spacing:0.1em">
+                ${a.pin}
+              </span>
+            </td>
             <td><span class="tag">${a.coefficient}</span></td>
             <td class="text-xs text-gray">${formatTime(attendance[a.code].registeredAt)}</td>
             <td>
@@ -419,6 +468,7 @@ function renderPresentTable() {
     </table>
   </div>`;
 }
+
 
 /* ══════════════════════════════════════════════════════
    TAB: LISTA COMPLETA
@@ -775,14 +825,14 @@ function exportCSV() {
   csv     += `Coeficiente presente:,${s.presentCoeff.toFixed(2)},de,${TOTAL_COEFF.toFixed(2)}\n`;
   csv     += `% Coeficiente:,${s.pctCoeff}%\n`;
   csv     += `Quórum:,${s.quorum?"SÍ":"NO"}\n\n`;
-  csv     += `#,Apartamento,Propietario,Asistente/Representante,Coeficiente,Estado,Hora Registro\n`;
+  csv     += `#,Apartamento,Propietario,PIN Votación,Asistente/Representante,Coeficiente,Estado,Hora Registro\n`;
   APARTMENTS
     .sort((a,b) => a.code.localeCompare(b.code))
     .forEach((a,i) => {
       const rec = attendance[a.code];
-      csv += `${i+1},"${a.code}","${a.owner}","${rec?.representative||""}",`+
-             `"${a.coefficient}","${rec?"Presente":"Ausente"}",`+
-             `"${rec ? formatDateTime(rec.registeredAt) : ""}"\n`;
+      csv += `${i+1},"${a.code}","${a.owner}","${a.pin}",`+
+             `"${rec?.representative||""}","${a.coefficient}",`+
+             `"${rec?"Presente":"Ausente"}","${rec?formatDateTime(rec.registeredAt):""}"\n`;
     });
   const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
   const url  = URL.createObjectURL(blob);
@@ -793,6 +843,7 @@ function exportCSV() {
   URL.revokeObjectURL(url);
   toast("CSV exportado", "success");
 }
+
 
 /* ══════════════════════════════════════════════════════
    EVENTOS GLOBALES (delegación — nunca interfiere con inputs)
