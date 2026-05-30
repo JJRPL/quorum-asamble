@@ -1,855 +1,208 @@
-/* ══════════════════════════════════════════════════════
-   CONTROL DE QUÓRUM — MULTIFAMILIARES LA POSADA
-   quorum.js  |  100% local, localStorage
-   ══════════════════════════════════════════════════════ */
-
-/* ── Persistencia ── */
-const LS_KEY = "quorum_asamblea_posada";
-
-function loadAttendance() {
-  try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; }
-  catch { return {}; }
-}
-function saveAttendance(data) {
-  localStorage.setItem(LS_KEY, JSON.stringify(data));
-}
-
-/* ── Estado ── */
-let attendance = loadAttendance();
-
-let state = {
-  searchQuery:    "",
-  suggestions:    [],
-  selectedApt:    null,
-  representative: "",
-  listFilter:     "todos",
-  listSearch:     "",
-  activeTab:      "registro",
-};
-
-/* ══════════════════════════════════════════════════════
-   TOASTS
-   ══════════════════════════════════════════════════════ */
-const toastWrap = document.createElement("div");
-toastWrap.className = "toast-wrap";
-document.body.appendChild(toastWrap);
-
-function toast(msg, type = "success", duration = 3000) {
-  const el = document.createElement("div");
-  el.className = `toast ${type}`;
-  el.innerHTML = `<span>${{success:"✅",danger:"❌",warning:"⚠️"}[type]||"ℹ️"}</span> ${msg}`;
-  toastWrap.appendChild(el);
-  setTimeout(() => {
-    el.classList.add("hiding");
-    setTimeout(() => el.remove(), 300);
-  }, duration);
-}
-
-/* ══════════════════════════════════════════════════════
-   UTILIDADES
-   ══════════════════════════════════════════════════════ */
-function esc(s) {
-  return String(s)
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
-    .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
-}
-function setHTML(id, html) {
-  const el = document.getElementById(id);
-  if (el) el.innerHTML = html;
-}
-function formatTime(iso) {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-  } catch { return iso; }
-}
-function formatDateTime(iso) {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    return d.toLocaleDateString("es-CO",{day:"2-digit",month:"2-digit",year:"numeric"})
-      + " " + d.toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-  } catch { return iso; }
-}
-function getStats() {
-  const total        = APARTMENTS.length;
-  const present      = Object.keys(attendance).length;
-  const absent       = total - present;
-  const pctApt       = total ? ((present/total)*100).toFixed(1) : 0;
-  const presentCoeff = APARTMENTS
-    .filter(a => attendance[a.code])
-    .reduce((s,a) => s + a.coefficient, 0);
-  const pctCoeff = TOTAL_COEFF ? ((presentCoeff/TOTAL_COEFF)*100).toFixed(2) : 0;
-  const quorum   = parseFloat(pctCoeff) >= QUORUM_MIN_PCT;
-  return { total, present, absent, pctApt, presentCoeff, pctCoeff, quorum };
-}
-
-/* ══════════════════════════════════════════════════════
-   RENDER COMPLETO
-   ══════════════════════════════════════════════════════ */
-function render() {
-  document.getElementById("app").innerHTML = `
-    ${renderHeader()}
-    <div class="container">
-      <div id="quorumBannerWrap">${renderQuorumBannerInner()}</div>
-      <div id="statsArea">${renderStatsInner()}</div>
-      <div class="tabs">
-        ${["registro","lista","resumen"].map(t => `
-          <div class="tab ${state.activeTab===t?"active":""}" onclick="setTab('${t}')">
-            ${{registro:"📋 Registro",lista:"🏠 Lista Completa",resumen:"📊 Resumen"}[t]}
-          </div>`).join("")}
-      </div>
-      ${ state.activeTab==="registro" ? renderRegistro()
-       : state.activeTab==="lista"    ? renderLista()
-       : renderResumen() }
-    </div>`;
-}
-
-function refreshStats() {
-  setHTML("quorumBannerWrap", renderQuorumBannerInner());
-  setHTML("statsArea",        renderStatsInner());
-}
-
-/* ══════════════════════════════════════════════════════
-   HEADER
-   ══════════════════════════════════════════════════════ */
-function renderHeader() {
-  return `
-  <div class="header">
-    <div>
-      <h1>🏢 Control de Quórum — Multifamiliares La Posada</h1>
-      <p>Registro de asistencia a asamblea</p>
-    </div>
-    <div class="header-right">
-      <span class="live-clock" id="liveClock">--:--:--</span>
-      <button class="btn btn-sm"
-        style="background:rgba(255,255,255,0.15);color:white"
-        onclick="exportCSV()">📥 Exportar</button>
-      <button class="btn btn-sm"
-        style="background:rgba(220,38,38,0.25);color:white"
-        onclick="confirmReset()">🗑️ Reset</button>
-    </div>
-  </div>`;
-}
-
-/* ══════════════════════════════════════════════════════
-   QUÓRUM BANNER
-   ══════════════════════════════════════════════════════ */
-function renderQuorumBannerInner() {
-  const s = getStats();
-  return `
-  <div class="quorum-banner ${s.quorum?"si":"no"}">
-    <div>
-      <div class="qtext">
-        ${s.quorum ? "✅ QUÓRUM ALCANZADO" : "⏳ SIN QUÓRUM AÚN"}
-      </div>
-      <div class="qsub">
-        Se requiere ≥ ${QUORUM_MIN_PCT}% del coeficiente total
-        — actualmente: <strong>${s.pctCoeff}%</strong>
-        (${s.presentCoeff.toFixed(2)} de ${TOTAL_COEFF.toFixed(2)})
-      </div>
-    </div>
-    <div style="text-align:right">
-      <div style="font-size:2rem;font-weight:800;line-height:1">${s.pctCoeff}%</div>
-      <div style="font-size:0.8rem;opacity:0.75">del coeficiente</div>
-    </div>
-  </div>`;
-}
-
-/* ══════════════════════════════════════════════════════
-   STATS
-   ══════════════════════════════════════════════════════ */
-function renderStatsInner() {
-  const s = getStats();
-  return `
-  <div class="stats-grid">
-    <div class="stat-card">
-      <div><div class="val">${s.total}</div><div class="lbl">Total Apts.</div></div>
-      <div class="ico">🏠</div>
-    </div>
-    <div class="stat-card green">
-      <div><div class="val">${s.present}</div><div class="lbl">Presentes</div></div>
-      <div class="ico">✅</div>
-    </div>
-    <div class="stat-card orange">
-      <div><div class="val">${s.absent}</div><div class="lbl">Ausentes</div></div>
-      <div class="ico">⏳</div>
-    </div>
-    <div class="stat-card purple">
-      <div><div class="val">${s.pctApt}%</div><div class="lbl">% Aptos.</div></div>
-      <div class="ico">📊</div>
-    </div>
-    <div class="stat-card ${s.quorum?"green":"red"}">
-      <div><div class="val">${s.pctCoeff}%</div><div class="lbl">% Coeficiente</div></div>
-      <div class="ico">${s.quorum?"🎉":"📈"}</div>
-    </div>
-  </div>
-  <div class="card mb-4" style="margin-bottom:20px">
-    <div class="card-body" style="padding:16px 20px">
-      <div class="flex justify-between" style="margin-bottom:6px">
-        <span class="font-bold text-sm">Progreso de quórum</span>
-        <span class="text-sm text-gray">${s.present} / ${s.total} apartamentos</span>
-      </div>
-      <div class="progress-wrap">
-        <div class="progress-bar ${s.quorum?"green":""}"
-          style="width:${Math.min(s.pctCoeff,100)}%"></div>
-      </div>
-      <div class="progress-lbl">
-        Falta: ${Math.max(0,(QUORUM_MIN_PCT - parseFloat(s.pctCoeff)).toFixed(2))}%
-        del coeficiente para alcanzar quórum
-      </div>
-    </div>
-  </div>`;
-}
-
-/* ══════════════════════════════════════════════════════
-   TAB: REGISTRO
-   El campo de representante tiene su propio div estable
-   (#repWrap) que NUNCA se re-renderiza al escribir.
-   ══════════════════════════════════════════════════════ */
-function renderRegistro() {
-  return `
-  <div class="main-grid">
-
-    <!-- Izquierda -->
-    <div>
-      <div class="card">
-        <div class="card-header"><h2>📋 Registrar Asistencia</h2></div>
-        <div class="card-body">
-
-          <!-- Buscador: sin oninput en HTML -->
-          <div class="search-box">
-            <span class="ico">🔍</span>
-            <input
-              type="text"
-              id="searchInput"
-              placeholder="Buscar apartamento o propietario..."
-              value="${esc(state.searchQuery)}"
-              autocomplete="off"
-            />
-          </div>
-
-          <!-- Sugerencias -->
-          <div id="suggestionsWrap">${renderSuggestions()}</div>
-
-          <!-- Tarjeta de confirmación (sin el campo de rep) -->
-          <div id="confirmWrap">${renderConfirmCard()}</div>
-
-          <!-- Campo representante INDEPENDIENTE — nunca se destruye -->
-          <div id="repWrap">${renderRepField()}</div>
-
-          <!-- Botones de acción -->
-          <div id="actionWrap">${renderActionButtons()}</div>
-
-          <hr class="divider"/>
-
-          <!-- Últimos registros -->
-          <div id="recentWrap">${renderRecent()}</div>
-
-        </div>
-      </div>
-    </div>
-
-    <!-- Derecha: tabla de presentes -->
-    <div>
-      <div class="card">
-        <div class="card-header">
-          <h2>✅ Presentes (<span id="presentCount">${Object.keys(attendance).length}</span>)</h2>
-          <span class="tag" id="presentCoeffTag">${getStats().pctCoeff}% coeficiente</span>
-        </div>
-        <div class="card-body" style="padding:0">
-          <div id="presentTableWrap">${renderPresentTable()}</div>
-        </div>
-      </div>
-    </div>
-
-  </div>`;
-}
-
-/* ── Tarjeta de confirmación (SIN el campo de texto de rep) ── */
-function renderConfirmCard() {
-  const apt = state.selectedApt;
-  if (!apt) return `
-    <div style="text-align:center;padding:24px 0;color:var(--gray-400)">
-      <div style="font-size:2.5rem;margin-bottom:8px">🔍</div>
-      <div class="text-sm">Busque un apartamento para registrar su asistencia</div>
-    </div>`;
-  return `
-  <div class="confirm-card" style="margin-bottom:12px">
-    <div class="apt">🏠 ${apt.code}</div>
-    <div class="name">${esc(apt.owner)}</div>
-    <div class="coeff">Coeficiente: ${apt.coefficient}%</div>
-  </div>`;
-}
-
-/* ── Campo representante: contenedor ESTABLE ──
-   Se muestra/oculta pero NUNCA se re-crea mientras se escribe ── */
-function renderRepField() {
-  const visible = !!state.selectedApt;
-  return `
-  <div style="display:${visible?"block":"none"};margin-bottom:12px">
-    <label style="display:block;font-weight:600;font-size:0.875rem;
-                  margin-bottom:6px;color:var(--gray-700)">
-      ¿Quién asiste? — Propietario o representante
-    </label>
-    <input
-      type="text"
-      id="repInput"
-      placeholder="Escriba el nombre completo de quien se presenta..."
-      style="width:100%;padding:10px 14px;border:2px solid var(--gray-200);
-             border-radius:8px;font-size:0.95rem;box-sizing:border-box;
-             transition:border 0.15s"
-      onfocus="this.style.borderColor='var(--primary)';
-               this.style.boxShadow='0 0 0 3px rgba(26,86,219,0.1)'"
-      onblur="this.style.borderColor='var(--gray-200)';
-              this.style.boxShadow='none'"
-    />
-    <div style="font-size:0.78rem;color:var(--gray-500);margin-top:4px">
-      Puede ser el propietario, un familiar o un representante autorizado.
-    </div>
-  </div>`;
-}
-
-/* ── Botones de acción ── */
-function renderActionButtons() {
-  if (!state.selectedApt) return "";
-  return `
-  <div class="flex gap-2">
-    <button class="btn btn-success btn-lg" style="flex:1" onclick="registerAttendance()">
-      ✅ Confirmar Asistencia
-    </button>
-    <button class="btn btn-gray btn-lg" onclick="clearSelection()" title="Cancelar">✕</button>
-  </div>`;
-}
-
-/* ── Sugerencias ── */
-function renderSuggestions() {
-  if (state.suggestions.length === 0) return "";
-  return `
-  <div class="suggestions" id="suggestionsBox">
-    ${state.suggestions.map(a => {
-      const ya = !!attendance[a.code];
-      return `
-      <div class="suggestion-item ${ya?"ya-registrado":""}"
-        onclick="${ya
-          ? "toast('Este apartamento ya está registrado.','warning')"
-          : `selectApt('${a.code}')`}">
-        <div class="apt-code">
-          ${a.code}
-          ${ya ? `<span class="badge badge-success" style="margin-left:6px">✅ Presente</span>` : ""}
-        </div>
-        <div class="apt-name">${esc(a.owner)}</div>
-        <div class="apt-coeff">Coeficiente: ${a.coefficient}%</div>
-      </div>`;
-    }).join("")}
-  </div>`;
-}
-
-/* ── Recientes ── */
-function renderRecent() {
-  const recent = APARTMENTS
-    .filter(a => attendance[a.code])
-    .sort((a,b) => new Date(attendance[b.code].registeredAt) - new Date(attendance[a.code].registeredAt))
-    .slice(0, 6);
-  return `
-  <div class="font-bold text-sm" style="margin-bottom:10px">🕐 Últimos registros</div>
-  ${recent.length === 0
-    ? `<div class="text-center text-gray text-sm" style="padding:12px">Sin registros aún.</div>`
-    : recent.map(a => `
-      <div style="display:flex;align-items:center;justify-content:space-between;
-                  padding:8px 0;border-bottom:1px solid var(--gray-100)">
-        <div>
-          <span class="font-bold text-sm">${a.code}</span>
-          <span class="text-xs text-gray" style="margin-left:6px">
-            ${esc(a.owner.split(" ").slice(0,2).join(" "))}
-          </span>
-          ${attendance[a.code].representative
-            ? `<span class="text-xs text-gray"> · ${esc(attendance[a.code].representative)}</span>`
-            : ""}
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="text-xs text-gray">${formatTime(attendance[a.code].registeredAt)}</span>
-          <button class="btn btn-sm btn-danger" style="padding:3px 8px;font-size:0.72rem"
-            onclick="removeAttendance('${a.code}')">✕</button>
-        </div>
-      </div>`).join("")}`;
-}
-
-/* ── Tabla de presentes ── */
-function renderPresentTable() {
-  const rows = APARTMENTS
-    .filter(a => attendance[a.code])
-    .sort((a,b) => new Date(attendance[b.code].registeredAt) - new Date(attendance[a.code].registeredAt));
-  if (rows.length === 0) return `
-    <div class="table-wrap"><table><tbody>
-      <tr><td colspan="6" class="text-center text-gray" style="padding:30px">
-        Ningún apartamento registrado aún.
-      </td></tr>
-    </tbody></table></div>`;
-  return `
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Apartamento</th><th>Propietario / Representante</th>
-          <th>Coef.</th><th>Hora</th><th></th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map(a => `
-          <tr>
-            <td><span class="font-mono font-bold">${a.code}</span></td>
-            <td class="text-sm">
-              <div>${esc(a.owner)}</div>
-              ${attendance[a.code].representative
-                ? `<div style="color:var(--primary);font-size:0.78rem;margin-top:2px">
-                     👤 ${esc(attendance[a.code].representative)}
-                   </div>`
-                : ""}
-            </td>
-            <td><span class="tag">${a.coefficient}</span></td>
-            <td class="text-xs text-gray">${formatTime(attendance[a.code].registeredAt)}</td>
-            <td>
-              <button class="btn btn-sm btn-danger" style="padding:3px 8px"
-                onclick="removeAttendance('${a.code}')">✕</button>
-            </td>
-          </tr>`).join("")}
-      </tbody>
-    </table>
-  </div>`;
-}
-
-/* ══════════════════════════════════════════════════════
-   TAB: LISTA COMPLETA
-   ══════════════════════════════════════════════════════ */
-function renderLista() {
-  return `
-  <div class="card">
-    <div class="card-header">
-      <h2>🏠 Lista Completa</h2>
-      <button class="btn btn-success btn-sm" onclick="exportCSV()">📥 CSV</button>
-    </div>
-    <div class="card-body">
-      <div class="filter-wrap mb-3">
-        ${["todos","presentes","ausentes"].map(f => `
-          <button class="filter-btn ${state.listFilter===f?"active":""}"
-            onclick="setListFilter('${f}')">
-            ${{todos:"Todos",presentes:"✅ Presentes",ausentes:"⏳ Ausentes"}[f]}
-          </button>`).join("")}
-      </div>
-      <div class="search-box" style="margin-bottom:12px">
-        <span class="ico">🔍</span>
-        <input type="text" id="listSearchInput"
-          placeholder="Buscar en la lista..."
-          value="${esc(state.listSearch)}"/>
-      </div>
-      <div id="listaTableWrap">${renderListaTable()}</div>
-    </div>
-  </div>`;
-}
-
-function renderListaTable() {
-  const f = state.listSearch.toLowerCase().trim();
-  const filtered = APARTMENTS.filter(a => {
-    if (state.listFilter === "presentes" && !attendance[a.code]) return false;
-    if (state.listFilter === "ausentes"  &&  attendance[a.code]) return false;
-    if (f) return a.code.toLowerCase().includes(f) || a.owner.toLowerCase().includes(f);
-    return true;
-  });
-  return `
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>#</th><th>Apartamento</th><th>Propietario</th><th>Coeficiente</th>
-          <th>Estado</th><th>Hora</th><th>Asistente</th><th>Acción</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${filtered.map((a,i) => {
-          const rec = attendance[a.code];
-          return `
-          <tr>
-            <td class="text-gray text-xs">${i+1}</td>
-            <td><span class="font-mono font-bold">${a.code}</span></td>
-            <td class="text-sm">${esc(a.owner)}</td>
-            <td><span class="tag">${a.coefficient}%</span></td>
-            <td>${rec
-              ? `<span class="badge badge-success">✅ Presente</span>`
-              : `<span class="badge badge-gray">⏳ Ausente</span>`}</td>
-            <td class="text-xs text-gray">${rec ? formatTime(rec.registeredAt) : "—"}</td>
-            <td class="text-xs text-gray">${rec?.representative ? esc(rec.representative) : "—"}</td>
-            <td>${rec
-              ? `<button class="btn btn-sm btn-danger"
-                   onclick="removeAttendance('${a.code}')">✕ Quitar</button>`
-              : `<button class="btn btn-sm btn-success"
-                   onclick="quickRegister('${a.code}')">+ Registrar</button>`}
-            </td>
-          </tr>`;
-        }).join("")}
-      </tbody>
-    </table>
-  </div>
-  <div class="text-sm text-gray" style="margin-top:12px">
-    Mostrando ${filtered.length} de ${APARTMENTS.length} apartamentos
-  </div>`;
-}
-
-/* ══════════════════════════════════════════════════════
-   TAB: RESUMEN
-   ══════════════════════════════════════════════════════ */
-function renderResumen() {
-  const s = getStats();
-  const bloques = {};
-  APARTMENTS.forEach(a => {
-    const b = a.code.split("-")[0];
-    if (!bloques[b]) bloques[b] = {total:0,present:0,coeff:0,coeffTotal:0};
-    bloques[b].total++;
-    bloques[b].coeffTotal += a.coefficient;
-    if (attendance[a.code]) { bloques[b].present++; bloques[b].coeff += a.coefficient; }
-  });
-  return `
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
-    <div class="card">
-      <div class="card-header"><h2>📊 Resumen General</h2></div>
-      <div class="card-body">
-        <table><tbody>
-          <tr><td class="font-bold">Total apartamentos</td>
-              <td style="text-align:right;font-weight:700">${s.total}</td></tr>
-          <tr><td style="color:var(--success)">✅ Presentes</td>
-              <td style="text-align:right;font-weight:700">${s.present}</td></tr>
-          <tr><td style="color:var(--warning)">⏳ Ausentes</td>
-              <td style="text-align:right;font-weight:700">${s.absent}</td></tr>
-          <tr><td>% por apartamentos</td>
-              <td style="text-align:right;font-weight:700">${s.pctApt}%</td></tr>
-          <tr style="border-top:2px solid var(--gray-200)">
-            <td class="font-bold">Coeficiente total</td>
-            <td style="text-align:right;font-weight:700">${TOTAL_COEFF.toFixed(2)}</td></tr>
-          <tr><td style="color:var(--success)">Coef. presente</td>
-              <td style="text-align:right;font-weight:700">${s.presentCoeff.toFixed(2)}</td></tr>
-          <tr><td class="font-bold">% Coeficiente</td>
-              <td style="text-align:right;font-weight:800;font-size:1.1rem;
-                         color:${s.quorum?"var(--success)":"var(--danger)"}">
-                ${s.pctCoeff}%</td></tr>
-          <tr style="border-top:2px solid var(--gray-200)">
-            <td class="font-bold">¿Quórum?</td>
-            <td style="text-align:right">
-              ${s.quorum
-                ? `<span class="badge badge-success">✅ SÍ</span>`
-                : `<span class="badge badge-danger">❌ NO</span>`}
-            </td></tr>
-          <tr><td>Falta para quórum</td>
-              <td style="text-align:right;font-weight:700">
-                ${s.quorum ? "—"
-                  : (QUORUM_MIN_PCT - parseFloat(s.pctCoeff)).toFixed(2) + "%"}
-              </td></tr>
-        </tbody></table>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header"><h2>🏗️ Por Bloque</h2></div>
-      <div class="card-body" style="padding:0">
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Bloque</th><th>Aptos.</th><th>Presentes</th><th>%</th><th>Coef.</th></tr>
-            </thead>
-            <tbody>
-              ${Object.entries(bloques)
-                .sort((a,b) => parseInt(a[0]) - parseInt(b[0]))
-                .map(([b,d]) => `
-                <tr>
-                  <td><span class="font-mono font-bold">Bloque ${b}</span></td>
-                  <td>${d.total}</td>
-                  <td style="color:${d.present===d.total?"var(--success)":"inherit"}">
-                    ${d.present}/${d.total}
-                  </td>
-                  <td><span class="tag">
-                    ${d.total?((d.present/d.total)*100).toFixed(0):0}%
-                  </span></td>
-                  <td>${d.coeff.toFixed(2)}</td>
-                </tr>`).join("")}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header">
-      <h2>🕐 Historial (orden de llegada)</h2>
-      <button class="btn btn-success btn-sm" onclick="exportCSV()">📥 Exportar CSV</button>
-    </div>
-    <div class="card-body" style="padding:0">
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>#</th><th>Apartamento</th><th>Propietario</th>
-                <th>Asistente / Representante</th><th>Coeficiente</th><th>Fecha y Hora</th></tr>
-          </thead>
-          <tbody>
-            ${(() => {
-              const rows = APARTMENTS
-                .filter(a => attendance[a.code])
-                .sort((a,b) =>
-                  new Date(attendance[a.code].registeredAt) -
-                  new Date(attendance[b.code].registeredAt));
-              if (!rows.length) return `
-                <tr><td colspan="6" class="text-center text-gray" style="padding:24px">
-                  Sin registros aún.</td></tr>`;
-              return rows.map((a,i) => `
-                <tr>
-                  <td class="text-gray text-xs">${i+1}</td>
-                  <td><span class="font-mono font-bold">${a.code}</span></td>
-                  <td class="text-sm">${esc(a.owner)}</td>
-                  <td class="text-sm" style="color:var(--primary)">
-                    ${attendance[a.code].representative
-                      ? esc(attendance[a.code].representative) : "—"}
-                  </td>
-                  <td><span class="tag">${a.coefficient}</span></td>
-                  <td class="text-sm">${formatDateTime(attendance[a.code].registeredAt)}</td>
-                </tr>`).join("");
-            })()}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>`;
-}
-
-/* ══════════════════════════════════════════════════════
-   ACCIONES
-   ══════════════════════════════════════════════════════ */
-function selectApt(code) {
-  const apt = APARTMENTS.find(a => a.code === code);
-  if (!apt) return;
-  if (attendance[code]) { toast("Este apartamento ya está registrado.", "warning"); return; }
-
-  state.selectedApt    = apt;
-  state.suggestions    = [];
-  state.searchQuery    = `${apt.code} — ${apt.owner}`;
-  state.representative = "";
-
-  // Actualizar el valor del input de búsqueda sin re-renderizarlo
-  const si = document.getElementById("searchInput");
-  if (si) si.value = state.searchQuery;
-
-  // Actualizar zonas parciales
-  setHTML("suggestionsWrap", renderSuggestions());
-  setHTML("confirmWrap",     renderConfirmCard());
-  setHTML("repWrap",         renderRepField());
-  setHTML("actionWrap",      renderActionButtons());
-
-  // Enfocar el campo de representante
-  setTimeout(() => {
-    const rep = document.getElementById("repInput");
-    if (rep) rep.focus();
-  }, 30);
-}
-
-function clearSelection() {
-  state.selectedApt    = null;
-  state.suggestions    = [];
-  state.searchQuery    = "";
-  state.representative = "";
-
-  const si = document.getElementById("searchInput");
-  if (si) { si.value = ""; si.focus(); }
-
-  setHTML("suggestionsWrap", renderSuggestions());
-  setHTML("confirmWrap",     renderConfirmCard());
-  setHTML("repWrap",         renderRepField());
-  setHTML("actionWrap",      renderActionButtons());
-}
-
-function registerAttendance() {
-  const apt = state.selectedApt;
-  if (!apt) return;
-  if (attendance[apt.code]) { toast("Ya está registrado.", "warning"); return; }
-
-  // Leer el valor actual del input de representante directamente del DOM
-  const repEl = document.getElementById("repInput");
-  const rep   = repEl ? repEl.value.trim() : "";
-
-  attendance[apt.code] = {
-    registeredAt:   new Date().toISOString(),
-    representative: rep,
-  };
-  saveAttendance(attendance);
-
-  const nombre = apt.owner.split(" ").slice(0,2).join(" ");
-  toast(`${apt.code} — ${nombre} registrado`, "success");
-
-  // Limpiar estado
-  state.selectedApt    = null;
-  state.searchQuery    = "";
-  state.suggestions    = [];
-  state.representative = "";
-
-  // Limpiar input de búsqueda
-  const si = document.getElementById("searchInput");
-  if (si) { si.value = ""; }
-
-  // Actualizar todas las zonas parciales
-  setHTML("suggestionsWrap",  renderSuggestions());
-  setHTML("confirmWrap",      renderConfirmCard());
-  setHTML("repWrap",          renderRepField());
-  setHTML("actionWrap",       renderActionButtons());
-  setHTML("recentWrap",       renderRecent());
-  setHTML("presentTableWrap", renderPresentTable());
-  setHTML("presentCount",     Object.keys(attendance).length);
-  setHTML("presentCoeffTag",  `${getStats().pctCoeff}% coeficiente`);
-  refreshStats();
-
-  // Devolver foco al buscador
-  setTimeout(() => {
-    const s = document.getElementById("searchInput");
-    if (s) s.focus();
-  }, 30);
-}
-
-function quickRegister(code) {
-  const apt = APARTMENTS.find(a => a.code === code);
-  if (!apt || attendance[code]) return;
-  attendance[code] = { registeredAt: new Date().toISOString(), representative: "" };
-  saveAttendance(attendance);
-  toast(`${apt.code} registrado`, "success");
-  render();
-  setTimeout(() => {
-    const el = document.getElementById("listSearchInput");
-    if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-  }, 30);
-}
-
-function removeAttendance(code) {
-  const apt = APARTMENTS.find(a => a.code === code);
-  if (!apt) return;
-  if (!confirm(`¿Quitar la asistencia de:\n${apt.code} — ${apt.owner}?`)) return;
-  delete attendance[code];
-  saveAttendance(attendance);
-  toast(`${apt.code} removido`, "warning");
-
-  if (state.activeTab === "registro") {
-    setHTML("recentWrap",       renderRecent());
-    setHTML("presentTableWrap", renderPresentTable());
-    setHTML("presentCount",     Object.keys(attendance).length);
-    setHTML("presentCoeffTag",  `${getStats().pctCoeff}% coeficiente`);
-    refreshStats();
-  } else {
-    render();
-  }
-}
-
-function confirmReset() {
-  if (!confirm("⚠️ ¿Resetear TODOS los registros?\nEsta acción no se puede deshacer.")) return;
-  attendance = {};
-  saveAttendance(attendance);
-  toast("Registros limpiados", "warning");
-  render();
-}
-
-function setTab(tab) {
-  state.activeTab  = tab;
-  state.listSearch = "";
-  render();
-}
-
-function setListFilter(f) {
-  state.listFilter = f;
-  document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
-  event?.target?.classList.add("active");
-  setHTML("listaTableWrap", renderListaTable());
-}
-
-/* ══════════════════════════════════════════════════════
-   EXPORTAR CSV
-   ══════════════════════════════════════════════════════ */
-function exportCSV() {
-  const s  = getStats();
-  let csv  = `REGISTRO DE ASISTENCIA — MULTIFAMILIARES LA POSADA\n`;
-  csv     += `Fecha:,${new Date().toLocaleDateString("es-CO")}\n`;
-  csv     += `Presentes:,${s.present},de,${s.total}\n`;
-  csv     += `Coeficiente presente:,${s.presentCoeff.toFixed(2)},de,${TOTAL_COEFF.toFixed(2)}\n`;
-  csv     += `% Coeficiente:,${s.pctCoeff}%\n`;
-  csv     += `Quórum:,${s.quorum?"SÍ":"NO"}\n\n`;
-  csv     += `#,Apartamento,Propietario,Asistente/Representante,Coeficiente,Estado,Hora Registro\n`;
-  APARTMENTS
-    .sort((a,b) => a.code.localeCompare(b.code))
-    .forEach((a,i) => {
-      const rec = attendance[a.code];
-      csv += `${i+1},"${a.code}","${a.owner}","${rec?.representative||""}",`+
-             `"${a.coefficient}","${rec?"Presente":"Ausente"}",`+
-             `"${rec ? formatDateTime(rec.registeredAt) : ""}"\n`;
-    });
-  const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
-  const url  = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href     = url;
-  link.download = `quorum_posada_${new Date().toISOString().slice(0,10)}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
-  toast("CSV exportado", "success");
-}
-
-/* ══════════════════════════════════════════════════════
-   EVENTOS GLOBALES (delegación — nunca interfiere con inputs)
-   ══════════════════════════════════════════════════════ */
-document.addEventListener("input", e => {
-  if (e.target.id === "searchInput")    onSearchMain(e.target.value);
-  if (e.target.id === "listSearchInput") onListSearchInput(e.target.value);
-  // repInput: NO hacemos nada — el valor se lee en registerAttendance()
-});
-
-document.addEventListener("keydown", e => {
-  if (e.target.id === "searchInput" && e.key === "Enter") {
-    const disponibles = state.suggestions.filter(a => !attendance[a.code]);
-    if (disponibles.length === 1) selectApt(disponibles[0].code);
-  }
-  if (e.target.id === "repInput" && e.key === "Enter") {
-    registerAttendance();
-  }
-});
-
-// Cerrar sugerencias al clicar fuera
-document.addEventListener("click", e => {
-  if (!e.target.closest("#suggestionsWrap") && e.target.id !== "searchInput") {
-    if (state.suggestions.length > 0) {
-      state.suggestions = [];
-      setHTML("suggestionsWrap", "");
-    }
-  }
-});
-
-function onSearchMain(value) {
-  state.searchQuery = value;
-  const q = value.toLowerCase().trim();
-  state.suggestions = q.length < 1 ? [] : APARTMENTS.filter(a =>
-    a.code.toLowerCase().includes(q) || a.owner.toLowerCase().includes(q)
-  ).slice(0, 8);
-  setHTML("suggestionsWrap", renderSuggestions());
-}
-
-function onListSearchInput(value) {
-  state.listSearch = value;
-  setHTML("listaTableWrap", renderListaTable());
-}
-
-/* ══════════════════════════════════════════════════════
-   RELOJ EN VIVO
-   ══════════════════════════════════════════════════════ */
-function updateClock() {
-  const el = document.getElementById("liveClock");
-  if (el) el.textContent = new Date().toLocaleTimeString("es-CO",{
-    hour:"2-digit", minute:"2-digit", second:"2-digit"
-  });
-}
-setInterval(updateClock, 1000);
-
-/* ══════════════════════════════════════════════════════
-   BOOT
-   ══════════════════════════════════════════════════════ */
-render();
-updateClock();
+const APARTMENTS = [
+  { code:"01-101", owner:"AMANDA CASTRILLON RESTREPO",               coefficient:0.51 },
+  { code:"01-102", owner:"FABIAN ALBERTO VERA MEJIA",                coefficient:0.51 },
+  { code:"01-201", owner:"CATALINA JIMENEZ ZAPATA",                  coefficient:0.51 },
+  { code:"01-202", owner:"GLORIA LUCIA CARDONA V",                   coefficient:0.51 },
+  { code:"01-301", owner:"BEATRIZ SANCHEZ",                          coefficient:0.51 },
+  { code:"01-302", owner:"JUAN CARLOS HIDALGO ESPINOSA",             coefficient:0.51 },
+  { code:"01-401", owner:"DIANA MARCELA MEJIA ARIAS",                coefficient:0.51 },
+  { code:"01-402", owner:"MARIA ROSMIRA ZULETA FRANCO",              coefficient:0.51 },
+  { code:"01-501", owner:"MARIA YAZMIN BURITICA ARIAS",              coefficient:0.51 },
+  { code:"01-502", owner:"LUIS EDUARDO MEJIA ALVAREZ",               coefficient:0.51 },
+  { code:"02-101", owner:"LUIS CARLOS DE JESUS MEJIA ALV",           coefficient:0.51 },
+  { code:"02-102", owner:"MIGUEL FERNANDO MARTINEZ RODAS Y",         coefficient:0.51 },
+  { code:"02-201", owner:"JAIME ALONSO QUICENO GUZMAN",              coefficient:0.51 },
+  { code:"02-202", owner:"ROSA ELVIRA VIVIESCAS MONSALVE",           coefficient:0.51 },
+  { code:"02-301", owner:"GONZALO DE JESUS OSPINA CASTAÑO",          coefficient:0.51 },
+  { code:"02-302", owner:"BELARMINA DE JESUS SUAREZ DE M",           coefficient:0.51 },
+  { code:"02-401", owner:"KELLY ALEJANDRA CORRALES SANTA",           coefficient:0.51 },
+  { code:"02-402", owner:"NURY DEL SOCORRO PARRA LONDOÑO",           coefficient:0.51 },
+  { code:"02-501", owner:"CLARA ROSA GOMEZ CARDONA",                 coefficient:0.51 },
+  { code:"02-502", owner:"HUGO ARMANDO LONDOÑO MUÑOZ",               coefficient:0.51 },
+  { code:"03-101", owner:"GABRIEL ANGEL CORREA YEPES",               coefficient:0.51 },
+  { code:"03-102", owner:"MARTA MIRIAN PALACIO CORREA Y CLAUDIA",    coefficient:0.51 },
+  { code:"03-201", owner:"LUIS FERNANDO CARMONA GAVIRIA",            coefficient:0.51 },
+  { code:"03-202", owner:"TERESA DE JESUS OSPINA CASTAÑO",           coefficient:0.51 },
+  { code:"03-301", owner:"ONEIDA DEL SOCORRO MORALES CAN",           coefficient:0.51 },
+  { code:"03-302", owner:"OSCAR DE JESUS RESTREPO",                  coefficient:0.51 },
+  { code:"03-401", owner:"OSCAR JAVIER QUICENO MUÑOZ",               coefficient:0.51 },
+  { code:"03-402", owner:"AMANDA DEL CONSUELO ROMERO ZAP",           coefficient:0.51 },
+  { code:"03-501", owner:"JORGE ALBEIRO RUIZ LOPEZ",                 coefficient:0.51 },
+  { code:"03-502", owner:"LINA MARIA URREA SIERRA",                  coefficient:0.51 },
+  { code:"04-101", owner:"GABRIELA HINCAPIE",                        coefficient:0.51 },
+  { code:"04-102", owner:"ROSA EDILMA LARGO CRUZ",                   coefficient:0.51 },
+  { code:"04-201", owner:"CANDIDA ESTHER SANCHEZ ALZATE",            coefficient:0.51 },
+  { code:"04-202", owner:"AMPARO VELASQUEZ MARIN",                   coefficient:0.51 },
+  { code:"04-301", owner:"DORA CECILIA TANGARIFE GUZMAN",            coefficient:0.51 },
+  { code:"04-302", owner:"NELSON DE JESUS OSPINA GOMEZ",             coefficient:0.51 },
+  { code:"04-401", owner:"RUBY PATRICIA VASQUEZ MURILLO",            coefficient:0.51 },
+  { code:"04-402", owner:"SERGIO ANDRES ARANGO HERNADEZ",            coefficient:0.51 },
+  { code:"04-501", owner:"MARIA VICTORIA MEDINA MONTOYA",            coefficient:0.51 },
+  { code:"04-502", owner:"MARTHA LUCIA ZAPATA DE MEJIA",             coefficient:0.51 },
+  { code:"05-101", owner:"ALEXIS ANTONIO MOLINA JARAMILL",           coefficient:0.51 },
+  { code:"05-102", owner:"BERNARDO DE JESUS RESTREPO CALLE",         coefficient:0.51 },
+  { code:"05-201", owner:"JOSE ORLAY TORO",                          coefficient:0.51 },
+  { code:"05-202", owner:"RODRIGO CESPEDES VELASQUEZ",               coefficient:0.51 },
+  { code:"05-301", owner:"ALIRIO DE JESUS PEREZ CORREA",             coefficient:0.51 },
+  { code:"05-302", owner:"PAULA ANDREA DEL VALLE ZULETA",            coefficient:0.51 },
+  { code:"05-401", owner:"HECTOR DE JESUS MORALES SUAREZ",           coefficient:0.51 },
+  { code:"05-402", owner:"LISED ZULUAGA TOBON",                      coefficient:0.51 },
+  { code:"05-501", owner:"BERNARDO DE JESUS RESTREPO CALLE",         coefficient:0.51 },
+  { code:"05-502", owner:"JHON HENRY HINCAPIE",                      coefficient:0.51 },
+  { code:"06-101", owner:"MARTHA CECILIA MESTRA MESTRA",             coefficient:0.51 },
+  { code:"06-102", owner:"LUZ HELENA GOMEZ",                         coefficient:0.51 },
+  { code:"06-201", owner:"JOSE MANUEL RAMIREZ RIVERA",               coefficient:0.51 },
+  { code:"06-202", owner:"MARIA ELENA PINEDA SANCHEZ",               coefficient:0.51 },
+  { code:"06-301", owner:"MARTHA CECILIA ACEVEDO BEDOYA",            coefficient:0.51 },
+  { code:"06-302", owner:"DIANA PATRICIA PEREZ GUTIERREZ/JUAN JOSE", coefficient:0.51 },
+  { code:"06-401", owner:"OFELIA DEL SOCORRO PABON GONZALEZ Y",      coefficient:0.51 },
+  { code:"06-402", owner:"GLORIA BEATRIZ GARCIA GARCIA Y MARTA DE",  coefficient:0.51 },
+  { code:"06-501", owner:"MARTHA LIGIA JARAMILLO MESA",              coefficient:0.51 },
+  { code:"06-502", owner:"DIEGO LUIS QUICENO FERNANDEZ",             coefficient:0.51 },
+  { code:"07-101", owner:"MARIA OFELIA CALLE MADRID",                coefficient:0.51 },
+  { code:"07-102", owner:"MARTHA NORELI LONDOÑO MORALES",            coefficient:0.51 },
+  { code:"07-201", owner:"CAROLINA RHENALS F.",                      coefficient:0.51 },
+  { code:"07-202", owner:"NORBEY GIRALDO",                           coefficient:0.51 },
+  { code:"07-301", owner:"MARIA VICTORIA MEJIA TABARES",             coefficient:0.51 },
+  { code:"07-302", owner:"GONZALO DE JESUS CORREA VARGAS",           coefficient:0.51 },
+  { code:"07-401", owner:"JULIETA RENDON RINCON",                    coefficient:0.51 },
+  { code:"07-402", owner:"SARA MARIA RODRIGUEZ PINO",                coefficient:0.51 },
+  { code:"07-501", owner:"EMMA LUCIA ALVAREZ VILLEGAS",              coefficient:0.51 },
+  { code:"07-502", owner:"LUIS FERNANDO MATABANCHOY MATABANCHOY",    coefficient:0.51 },
+  { code:"08-101", owner:"CONSUELO SEPULVEDA",                       coefficient:0.51 },
+  { code:"08-102", owner:"MARTHA ROCIO MIRA TABORDA",                coefficient:0.51 },
+  { code:"08-201", owner:"MARY LUZ GOMEZ PATIÑO",                    coefficient:0.51 },
+  { code:"08-202", owner:"ALBERTO ELIAS ZAPATA VASQUEZ",             coefficient:0.51 },
+  { code:"08-301", owner:"JOSE ALEXANDER VARGAS RAMIREZ",            coefficient:0.51 },
+  { code:"08-302", owner:"NORELA DEL SOCORRO MORALES CANO",          coefficient:0.51 },
+  { code:"08-401", owner:"JUAN CARLOS MORENO HURTADO",               coefficient:0.51 },
+  { code:"08-402", owner:"JAIME HUMBERTO OSORIO H",                  coefficient:0.51 },
+  { code:"08-501", owner:"SONIA LUCIA URIBE",                        coefficient:0.51 },
+  { code:"08-502", owner:"YOLANDA ZAPATA RUEDA",                     coefficient:0.51 },
+  { code:"09-101", owner:"DANIELA PATIÑO LONDOÑO",                   coefficient:0.51 },
+  { code:"09-102", owner:"JULIAN ANDRES VALENS ARCINIEGAS",          coefficient:0.51 },
+  { code:"09-201", owner:"HEIDY ALEJANDRA ALARCON SILVA",            coefficient:0.51 },
+  { code:"09-202", owner:"OLGA LUCIA SEPULVEDA VALENCIA",            coefficient:0.51 },
+  { code:"09-301", owner:"MARIA SONIA RESTREPO RESTREPO",            coefficient:0.51 },
+  { code:"09-302", owner:"DILSA MILENY MORALES CANO",                coefficient:0.51 },
+  { code:"09-401", owner:"GUSTAVO AYIRIS MISAS",                     coefficient:0.51 },
+  { code:"09-402", owner:"MARTA LUCIA RUIZ ZULUAGA",                 coefficient:0.51 },
+  { code:"09-501", owner:"GLORIA STELLA HENAO H",                    coefficient:0.51 },
+  { code:"09-502", owner:"JAIRO DE JESUS IDARRAGA LOPEZ",            coefficient:0.51 },
+  { code:"10-101", owner:"CLAUDIA MILENA VALENS/MARIA DENICE",       coefficient:0.42 },
+  { code:"10-102", owner:"GEORGINA JIMENEZ RIVERA",                  coefficient:0.51 },
+  { code:"10-201", owner:"ELIANA CORREA CALLE",                      coefficient:0.42 },
+  { code:"10-202", owner:"MIGUEL ANGEL GOMEZ VILLADA",               coefficient:0.51 },
+  { code:"10-301", owner:"MARIA TERESA MARTINEZ RODAS",              coefficient:0.42 },
+  { code:"10-302", owner:"ANGELA PATRICIA HENAO OSPINA",             coefficient:0.51 },
+  { code:"10-401", owner:"EUNICE CARDONA MUÑOZ",                     coefficient:0.42 },
+  { code:"10-402", owner:"LILIANA MARIA RINCON CARDONA",             coefficient:0.51 },
+  { code:"10-501", owner:"JUAN CARLOS GONZALEZ ZAPATA",              coefficient:0.42 },
+  { code:"10-502", owner:"CARMENZA SALDARRIAGA R/ JAVIER BUILES",    coefficient:0.51 },
+  { code:"11-101", owner:"GLORIA ELCY LÓPEZ ROJAS",                  coefficient:0.51 },
+  { code:"11-102", owner:"MIRIAM CARDONA DE VALENCIA",               coefficient:0.40 },
+  { code:"11-201", owner:"INES ECHEVERRY",                           coefficient:0.51 },
+  { code:"11-202", owner:"MAURICIO ALBERTO MADRID CATAÑO",           coefficient:0.40 },
+  { code:"11-301", owner:"GLORIA ELENA FORONDA GIL",                 coefficient:0.51 },
+  { code:"11-302", owner:"WALTER ALEXIS VASQUEZ",                    coefficient:0.40 },
+  { code:"11-401", owner:"AMPARO RESTREPO ARANGO",                   coefficient:0.51 },
+  { code:"11-402", owner:"GLADYS STELLA RAMÍREZ GÓMEZ",              coefficient:0.40 },
+  { code:"11-501", owner:"CARLOS E. DURANGO R / DIOMARA BERMUDEZ",   coefficient:0.51 },
+  { code:"11-502", owner:"MARIA OFELIA COLONIA GARCIA",              coefficient:0.40 },
+  { code:"12-109", owner:"LUZ MATILDE ZULUAGA MURILLO",              coefficient:0.51 },
+  { code:"12-110", owner:"NATALIA ANDREA LONDOÑO CORREA",            coefficient:0.51 },
+  { code:"12-209", owner:"CARLOS CASTAÑO NOREÑA",                    coefficient:0.51 },
+  { code:"12-210", owner:"LUZ MARINA LOPEZ QUINTERO",                coefficient:0.51 },
+  { code:"12-309", owner:"LEON DARIO MUÑOZ CARDONA",                 coefficient:0.51 },
+  { code:"12-310", owner:"CARLOS ESTEBAN GUZMAN TANGARIFE",          coefficient:0.51 },
+  { code:"12-409", owner:"BEATRIZ RODAS GOMEZ",                      coefficient:0.51 },
+  { code:"12-410", owner:"LUIS FERNANDO AGUDELO MARTINEZ",           coefficient:0.51 },
+  { code:"12-509", owner:"ANA MARIA MEJIA MARTINEZ",                 coefficient:0.51 },
+  { code:"12-510", owner:"WILMAR ANTONIO GALLEGO VANEGAS",           coefficient:0.51 },
+  { code:"13-107", owner:"MARTHA LILIANA IDARRAGA CASTAÑO",          coefficient:0.51 },
+  { code:"13-108", owner:"BILMA SORELLY ARISTIZABAL GOMEZ",          coefficient:0.51 },
+  { code:"13-207", owner:"JORGE ENRIQUE ESTRADA",                    coefficient:0.51 },
+  { code:"13-208", owner:"WILDER HERNANDO GIRALDO MONTOYA",          coefficient:0.51 },
+  { code:"13-307", owner:"JOSE LUIS ARANGO ECHEVERRI",               coefficient:0.51 },
+  { code:"13-308", owner:"MARIA ANGELICA MONTOYA LONDOÑO",           coefficient:0.51 },
+  { code:"13-407", owner:"LUIS GONZAGA CASTAÑO NOREÑA",              coefficient:0.51 },
+  { code:"13-408", owner:"HUGO ARMANDO LONDOÑO MUÑOZ",               coefficient:0.51 },
+  { code:"13-507", owner:"NORBEY GIRALDO",                           coefficient:0.51 },
+  { code:"13-508", owner:"NORELLA RESTREPO OCHOA",                   coefficient:0.51 },
+  { code:"14-105", owner:"JAVIER OQUENDO SOTO",                      coefficient:0.51 },
+  { code:"14-106", owner:"ELENA SILVA TENORIO",                      coefficient:0.51 },
+  { code:"14-205", owner:"OLGA DEL SOCORRO LOPEZ HENAO",             coefficient:0.51 },
+  { code:"14-206", owner:"BLANCA NIDIA GIRALDO VELEZ",               coefficient:0.51 },
+  { code:"14-305", owner:"ERIKA JANNETH CASTAÑEDA SALDARRIAGA",      coefficient:0.51 },
+  { code:"14-306", owner:"LUIS FERNANDO ZULETA RESTREPO",            coefficient:0.51 },
+  { code:"14-405", owner:"JESUS MARIA QUIROZ GUTIERREZ",             coefficient:0.51 },
+  { code:"14-406", owner:"DAVID CARRASQUILLA ROJAS Y OTROS",         coefficient:0.51 },
+  { code:"14-505", owner:"FRANK LONDOÑO",                            coefficient:0.51 },
+  { code:"14-506", owner:"FELIPE VARGAS RESTREPO Y VANESA SANCHEZ",  coefficient:0.51 },
+  { code:"15-103", owner:"ADRIANA PASTORA GALLEGO CANO",             coefficient:0.51 },
+  { code:"15-104", owner:"JORGE ARIEL FRANCO LOPEZ",                 coefficient:0.51 },
+  { code:"15-203", owner:"JOHN JAIRO MORALES",                       coefficient:0.51 },
+  { code:"15-204", owner:"WALTER DE JESUS SERNA HIGUITA",            coefficient:0.51 },
+  { code:"15-303", owner:"HUGO ARMANDO LONDOÑO MUÑOZ",               coefficient:0.51 },
+  { code:"15-304", owner:"JORGE LUIS RODRIGUEZ OSPINA",              coefficient:0.51 },
+  { code:"15-403", owner:"DELIO DE JESUS RIOS CARDONA Y LUZ ESTELLA",coefficient:0.51 },
+  { code:"15-404", owner:"JHON JAIRO SALAZAR HINCAPIE",              coefficient:0.51 },
+  { code:"15-503", owner:"MICHAEL ALVAREZ CORREA",                   coefficient:0.51 },
+  { code:"15-504", owner:"WILLMAR MEJIA CORREA",                     coefficient:0.51 },
+  { code:"16-101", owner:"LEON ALBERTO GALLEGO GALLEGO",             coefficient:0.51 },
+  { code:"16-102", owner:"MONICA PINO",                              coefficient:0.51 },
+  { code:"16-201", owner:"MARIA AMPARO MEJIA JARAMILLO",             coefficient:0.51 },
+  { code:"16-202", owner:"LIBARDO DE JESUS IDARRAGA CAST",           coefficient:0.51 },
+  { code:"16-301", owner:"ABRAHAM ALLEC LONDOÑO PINEDA",             coefficient:0.51 },
+  { code:"16-302", owner:"LEONARDO OLAYA LEAL",                      coefficient:0.51 },
+  { code:"16-401", owner:"JOHANN IVAN OLARTE ARBOLEDA",              coefficient:0.51 },
+  { code:"16-402", owner:"GABRIELA DEL SOCORRO MEJIA JARAMILLO",     coefficient:0.51 },
+  { code:"16-501", owner:"MARTHA RODAS OCHOA",                       coefficient:0.51 },
+  { code:"16-502", owner:"GUILLERMO DE JESUS CARDENAS CORREA",       coefficient:0.51 },
+  { code:"17-101", owner:"BERNARDO DE JESUS MEJIA ALVAREZ",          coefficient:0.40 },
+  { code:"17-102", owner:"BERNARDO DE JESUS MEJIA ALVAREZ",          coefficient:0.51 },
+  { code:"17-201", owner:"BIBIANA MARIA RODAS VELEZ",                coefficient:0.40 },
+  { code:"17-202", owner:"NUBIA AMPARO MEJIA BRAVO",                 coefficient:0.51 },
+  { code:"17-301", owner:"NORA EUGENIA MONTOYA OSPINA",              coefficient:0.40 },
+  { code:"17-302", owner:"MARIA CECILIA TEJADA RUIZ",                coefficient:0.51 },
+  { code:"17-401", owner:"ANGEL MARIA MONTENEGRO CENDALE",           coefficient:0.40 },
+  { code:"17-402", owner:"LUIS ANDRES GAVIRIA ARENAS",               coefficient:0.51 },
+  { code:"17-501", owner:"SANTIAGO IDARRAGA IDARRAGA",               coefficient:0.40 },
+  { code:"17-502", owner:"JULIAN ANDRES GONZALEZ VELEZ",             coefficient:0.51 },
+  { code:"18-101", owner:"LUIS FERNANDO OTALVARO ROJAS",             coefficient:0.51 },
+  { code:"18-102", owner:"MARIA EUGENIA BETANCUR BETANCUR",          coefficient:0.42 },
+  { code:"18-201", owner:"MARIA EUGENIA MEJIA DE VERA",              coefficient:0.51 },
+  { code:"18-202", owner:"DIANA MARIA ARIAS VALENCIA",               coefficient:0.42 },
+  { code:"18-301", owner:"LUZ EUGENIA CORREA RENDON",                coefficient:0.51 },
+  { code:"18-302", owner:"MONICA MA. HERNANDEZ CALLE / ALEJANDRA",   coefficient:0.42 },
+  { code:"18-401", owner:"DORA VALENCIA DUQUE/FREDY GUTIERREZ",      coefficient:0.51 },
+  { code:"18-402", owner:"LUIS FERNANDO CANO GOMEZ",                 coefficient:0.42 },
+  { code:"18-501", owner:"JORGE DUQUE ZAPATA",                       coefficient:0.51 },
+  { code:"18-502", owner:"MARIA LUISA CIFUENTES MESA",               coefficient:0.42 },
+  { code:"19-101", owner:"JOSE ALDEMAR TOBON LOPEZ",                 coefficient:0.51 },
+  { code:"19-102", owner:"ANDRES FELIPE LEDESMA",                    coefficient:0.51 },
+  { code:"19-201", owner:"OMAIRA DEL SOCORRO CARMONA JARAMILLO",     coefficient:0.51 },
+  { code:"19-202", owner:"BLANCA LUCIA CORREA GIL",                  coefficient:0.51 },
+  { code:"19-301", owner:"FANNY DEL S. CARDONA VILLEGAS",            coefficient:0.51 },
+  { code:"19-302", owner:"CARMEN CECILIA VIVIESCAS MONSALVE",        coefficient:0.51 },
+  { code:"19-401", owner:"MARIA TERESA ZAPATA DE NOREÑA",            coefficient:0.51 },
+  { code:"19-402", owner:"DARIO NONATO SEPULVEDA CARVAJAL",          coefficient:0.51 },
+  { code:"19-501", owner:"NELSON LONDOÑO/JOHANA BETANCUR",           coefficient:0.51 },
+  { code:"19-502", owner:"MARIA BARBARA HURTADO BARBOSA",            coefficient:0.51 },
+  { code:"20-101", owner:"CARMEN ALICIA JIMENEZ",                    coefficient:0.51 },
+  { code:"20-102", owner:"OLGA LUCIA TOBON CARO",                    coefficient:0.51 },
+  { code:"20-201", owner:"MARIA OFELIA VELEZ DE LOPEZ",              coefficient:0.51 },
+  { code:"20-202", owner:"EUSEBIO DE JESUS GALLEGO",                 coefficient:0.51 },
+  { code:"20-301", owner:"LUZ MARIELA GALLEGO ESCOBAR",              coefficient:0.51 },
+  { code:"20-302", owner:"GERMAN DE JESUS QUIROZ ZAPATA",            coefficient:0.51 },
+  { code:"20-401", owner:"CARMEN EMILIA LARREA VARGAS",              coefficient:0.51 },
+  { code:"20-402", owner:"GLORIA INES PEREIRA GIRON",                coefficient:0.51 },
+  { code:"20-501", owner:"PAOLA ANDREA RAMIREZ OTALVARO",            coefficient:0.51 },
+  { code:"20-502", owner:"CLAUDIA PATRICIA ECHAVARRIA CORTES",       coefficient:0.51 },
+];
+
+// Coeficiente total del conjunto
+const TOTAL_COEFF = APARTMENTS.reduce((s, a) => s + a.coefficient, 0);
+
+// Quórum mínimo legal (50% + 1 coeficiente en Colombia para asambleas ordinarias)
+const QUORUM_MIN_PCT = 50;
